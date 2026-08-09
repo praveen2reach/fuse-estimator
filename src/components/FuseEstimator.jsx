@@ -726,7 +726,7 @@ export default function App({ user, onLogout }) {
           { id: "costing", l: "💰 Costing" },
           { id: "guide", l: "📖 Guide" },
           { id: "saved", l: "📁 Saved" },
-          { id: "dashboard", l: "📈 Dashboard" },
+          ...(user?.role === "admin" ? [{ id: "dashboard", l: "📈 Dashboard" }] : []),
           ...(user?.role === "admin" ? [{ id: "users", l: "👥 Users" }] : []),
         ].map((t) => (
           <button key={t.id} onClick={() => { setTab(t.id); if (t.id === "users") fetchUsers(); if (t.id === "dashboard") fetchEstimates(); }} style={{ padding: "11px 16px", fontWeight: 600, fontSize: 12, cursor: "pointer", color: tab === t.id ? P.teal : P.muted, background: "transparent", border: "none", borderBottom: tab === t.id ? `3px solid ${P.teal}` : "3px solid transparent" }}>{t.l}</button>
@@ -973,7 +973,7 @@ export default function App({ user, onLogout }) {
                   <tr>
                     <th style={{ ...thStyle, minWidth: 110, position: "sticky", left: 0, zIndex: 2, background: P.navy }}>Role</th>
                     {Array.from({ length: tWks }, (_, i) => (
-                      <th key={i} style={{ ...thStyle, fontSize: 8, textAlign: "center", padding: "4px 1px", minWidth: 36 }}>W{i + 1}</th>
+                      <th key={i} style={{ ...thStyle, fontSize: 8, textAlign: "center", padding: "4px 2px", minWidth: 52 }}>W{i + 1}</th>
                     ))}
                     <th style={{ ...thStyle, background: P.teal, textAlign: "center", minWidth: 70 }}>Total ({hdr.currency})</th>
                   </tr>
@@ -991,7 +991,7 @@ export default function App({ user, onLogout }) {
                         return <td key={wi} style={{ ...tdStyle, textAlign: "center", padding: "2px 1px", background: wc.alloc > 0 ? `rgba(14,124,107,${bgIntensity})` : "transparent" }}>
                           <input type="number" min={0} max={1} step={0.1} value={wc.alloc}
                             onChange={(e) => setRoles((p) => p.map((x) => x.id === r.id ? { ...x, weekAlloc: { ...x.weekAlloc, [wi + 1]: Number(e.target.value) } } : x))}
-                            style={{ width: 32, padding: "2px 1px", textAlign: "center", borderRadius: 3, border: isOverridden ? `1.5px solid ${P.teal}` : `1px solid ${P.border}`, fontSize: 10, fontWeight: wc.alloc > 0 ? 600 : 400, background: "transparent", color: wc.alloc > 0 ? P.navy : "#ccc", outline: "none" }} />
+                            style={{ width: 46, padding: "3px 2px", textAlign: "center", borderRadius: 3, border: isOverridden ? `1.5px solid ${P.teal}` : `1px solid ${P.border}`, fontSize: 11, fontWeight: wc.alloc > 0 ? 600 : 400, background: "transparent", color: wc.alloc > 0 ? P.navy : "#ccc", outline: "none" }} />
                         </td>;
                       })}
                       <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, fontSize: 11, color: P.navy }}>{r.totalCost.toLocaleString()}</td>
