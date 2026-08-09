@@ -328,6 +328,126 @@ const wksBetween = (a, b) => Math.max(1, Math.ceil((new Date(b) - new Date(a)) /
 
 const totalObjCount = CATEGORIES.reduce((s, c) => s + c.objects.length, 0);
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEPENDENCY MAP — which objects depend on which (for sequencing)
+// ═══════════════════════════════════════════════════════════════════════════════
+const DEPENDENCY_MAP = {
+  // Core HR dependencies
+  business_unit: ["enterprise_structure", "legal_entity"],
+  department: ["business_unit"],
+  location: ["enterprise_structure"],
+  job: ["job_family"],
+  position: ["job", "department", "location", "grade"],
+  grade: ["enterprise_structure"],
+  person_type: ["enterprise_structure"],
+  employment_model: ["legal_entity"],
+  workforce_structure: ["department", "position"],
+  action_reason: ["person_type"],
+  document_record: ["legal_entity"],
+  transaction_design: ["action_reason"],
+  // Absence
+  absence_type: ["enterprise_structure"],
+  absence_plan: ["absence_type", "fast_formula"],
+  accrual_formula: ["absence_plan"],
+  absence_certification: ["absence_type"],
+  // Compensation
+  comp_element: ["enterprise_structure", "value_set"],
+  salary_basis: ["comp_element"],
+  comp_plan: ["comp_element", "salary_basis"],
+  comp_cycle: ["comp_plan"],
+  individual_comp: ["comp_element"],
+  total_comp_statement: ["comp_plan", "benefit_plan"],
+  // Benefits
+  benefit_plan: ["enterprise_structure", "comp_element"],
+  benefit_program: ["benefit_plan"],
+  life_event: ["benefit_plan"],
+  benefit_rate: ["benefit_plan"],
+  benefit_eligibility: ["benefit_plan"],
+  // Talent
+  goal_plan: ["enterprise_structure"],
+  performance_template: ["goal_plan", "talent_profile"],
+  talent_review: ["performance_template"],
+  succession_plan: ["talent_profile", "position"],
+  career_development: ["talent_profile"],
+  // Recruiting
+  requisition_template: ["job", "position"],
+  candidate_selection: ["requisition_template"],
+  offer_management: ["candidate_selection", "comp_plan"],
+  candidate_experience: ["requisition_template"],
+  // Learning
+  learning_course: ["enterprise_structure"],
+  learning_assignment: ["learning_course"],
+  learning_catalog: ["learning_course"],
+  // Time & Labor
+  time_card_layout: ["enterprise_structure"],
+  time_entry_rule: ["time_card_layout"],
+  time_calc_rule: ["time_card_layout", "fast_formula"],
+  work_schedule: ["enterprise_structure"],
+  absence_time_type: ["absence_type", "time_card_layout"],
+  // Payroll
+  payroll_definition: ["enterprise_structure", "work_schedule"],
+  payroll_element: ["payroll_definition", "fast_formula", "value_set"],
+  statutory_deduction: ["payroll_definition", "legal_entity"],
+  payroll_costing: ["payroll_element"],
+  payroll_balance: ["payroll_element"],
+  payroll_flow: ["payroll_definition"],
+  payslip_template: ["payroll_element"],
+  // UI/Config dependencies
+  fast_formula: ["value_set"],
+  approval_bpm: ["enterprise_structure"],
+  journey: ["enterprise_structure"],
+  descriptive_flex: ["value_set"],
+  extensible_flex: ["value_set"],
+  // Security
+  custom_role: ["enterprise_structure"],
+  data_role: ["custom_role"],
+  aor_rule: ["enterprise_structure"],
+  // Reports
+  bip_report: [],
+  otbi_analysis: [],
+  otbi_dashboard: ["otbi_analysis"],
+  // Extracts
+  extract_new: [],
+  extract_modify: [],
+  // Integrations
+  outbound_int: ["extract_new"],
+  // Data Migration — depends on config objects
+  hdl_worker: ["enterprise_structure", "legal_entity", "department", "job", "position", "grade"],
+  hdl_assignment: ["hdl_worker", "job", "position"],
+  hdl_salary: ["hdl_assignment", "salary_basis"],
+  hdl_absence: ["hdl_worker", "absence_plan"],
+  hdl_time: ["hdl_worker", "time_card_layout"],
+  hdl_payroll: ["hdl_worker", "payroll_element"],
+  hdl_benefits: ["hdl_worker", "benefit_plan"],
+  hdl_talent: ["hdl_worker", "talent_profile"],
+  hdl_learn: ["hdl_worker", "learning_course"],
+  hdl_goals: ["hdl_worker", "goal_plan"],
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEFAULT RISK REGISTER
+// ═══════════════════════════════════════════════════════════════════════════════
+const DEFAULT_RISKS = [
+  { id: "r1", assumption: "Client will provide clean source data for migration", impact: "data_migration", factor: 1.5, status: "open", category: "Data" },
+  { id: "r2", assumption: "Business processes are standardized across countries", impact: "core_hr", factor: 1.3, status: "open", category: "Process" },
+  { id: "r3", assumption: "Client SMEs available for workshops as scheduled", impact: "all", factor: 1.2, status: "open", category: "Resource" },
+  { id: "r4", assumption: "No legislative changes during implementation", impact: "payroll", factor: 1.4, status: "open", category: "Legislative" },
+  { id: "r5", assumption: "Existing integrations have documented APIs", impact: "integration", factor: 1.3, status: "open", category: "Technical" },
+  { id: "r6", assumption: "Single payroll provider per country", impact: "payroll", factor: 1.5, status: "open", category: "Scope" },
+  { id: "r7", assumption: "UAT sign-off within planned window", impact: "all", factor: 1.15, status: "open", category: "Timeline" },
+  { id: "r8", assumption: "No custom Redwood UI pages required", impact: "ui_config", factor: 1.4, status: "open", category: "Scope" },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROLLOUT MULTIPLIERS (for multi-country)
+// ═══════════════════════════════════════════════════════════════════════════════
+const ROLLOUT_TYPES = [
+  { id: "full", label: "Full Implementation", multiplier: 1.0, desc: "Complete design, build, test from scratch" },
+  { id: "template", label: "Template Rollout", multiplier: 0.4, desc: "Apply template with country-specific delta" },
+  { id: "delta", label: "Delta Only", multiplier: 0.25, desc: "Only country-specific variations (legislative, language)" },
+  { id: "clone", label: "Clone & Configure", multiplier: 0.15, desc: "Minimal changes — same process, different LE/BU" },
+];
+
 // ═══════════════════════════════════════════════════════════════
 export default function App({ user, onLogout }) {
   const [tab, setTab] = useState("estimate");
@@ -350,6 +470,14 @@ export default function App({ user, onLogout }) {
   const [userMsg, setUserMsg] = useState("");
   const [compareIds, setCompareIds] = useState([]);
   const [showCompare, setShowCompare] = useState(false);
+  // Risks
+  const [risks, setRisks] = useState(() => DEFAULT_RISKS.map((r) => ({ ...r, id: uid() })));
+  // Multi-country rollout
+  const [countries, setCountries] = useState([{ id: uid(), name: "Country 1", rolloutType: "full", multiplier: 1.0 }]);
+  // Actuals tracking
+  const [actualsMode, setActualsMode] = useState(null); // estimate id being tracked
+  const [actualsEntries, setActualsEntries] = useState([]);
+  const [benchmarks, setBenchmarks] = useState([]);
 
   // Load saved estimates from database on mount
   useEffect(() => {
@@ -417,6 +545,106 @@ export default function App({ user, onLogout }) {
     if (compareIds.length < 2) return [];
     return compareIds.map((id) => saved.find((e) => e.id === id)).filter(Boolean);
   }, [compareIds, saved]);
+
+  // Risk-adjusted effort
+  const activeRiskFactor = useMemo(() => {
+    const triggered = risks.filter((r) => r.status === "triggered");
+    if (!triggered.length) return 1;
+    // Compound the factors for triggered risks
+    return triggered.reduce((f, r) => f * r.factor, 1);
+  }, [risks]);
+
+  const riskAdjustedPD = r2(netPD * activeRiskFactor);
+
+  // Multi-country rollout total
+  const rolloutTotal = useMemo(() => {
+    if (countries.length <= 1) return null;
+    const baseEffort = netPD;
+    return countries.map((c) => ({
+      ...c,
+      effort: r2(baseEffort * c.multiplier),
+    }));
+  }, [countries, netPD]);
+
+  const rolloutGrandTotal = rolloutTotal ? r2(rolloutTotal.reduce((s, c) => s + c.effort, 0)) : netPD;
+
+  // Dependency analysis for current lines
+  const dependencyWarnings = useMemo(() => {
+    const selectedIds = new Set(lines.map((l) => l.objId));
+    const warnings = [];
+    lines.forEach((l) => {
+      const deps = DEPENDENCY_MAP[l.objId] || [];
+      deps.forEach((depId) => {
+        if (!selectedIds.has(depId)) {
+          const depObj = objMap[depId];
+          const srcObj = objMap[l.objId];
+          if (depObj && srcObj) {
+            warnings.push({ src: srcObj.name, srcId: l.objId, dep: depObj.name, depId, depCat: depObj.cat });
+          }
+        }
+      });
+    });
+    // Deduplicate by depId
+    const unique = [];
+    const seen = new Set();
+    warnings.forEach((w) => { const k = `${w.srcId}_${w.depId}`; if (!seen.has(k)) { seen.add(k); unique.push(w); } });
+    return unique;
+  }, [lines, objMap]);
+
+  // Fetch benchmarks
+  const fetchBenchmarks = async () => {
+    try {
+      const res = await fetch("/api/actuals", { method: "PUT" });
+      const data = await res.json();
+      if (data.benchmarks) setBenchmarks(data.benchmarks);
+    } catch (e) { console.error("Failed to load benchmarks", e); }
+  };
+
+  // Load actuals for an estimate
+  const loadActualsForEstimate = async (estId) => {
+    try {
+      const res = await fetch(`/api/actuals?estimate_id=${estId}`);
+      const data = await res.json();
+      return data.actuals || [];
+    } catch { return []; }
+  };
+
+  // Start actuals tracking for a saved estimate
+  const startActualsTracking = async (est) => {
+    const existingActuals = await loadActualsForEstimate(est.id);
+    const estLines = JSON.parse(est.lines_json || "[]");
+    const entries = estLines.map((l) => {
+      const o = objMap[l.objId];
+      const existing = existingActuals.find((a) => a.object_id === l.objId && a.complexity === l.comp);
+      return {
+        estimate_id: est.id, object_id: l.objId, object_name: o?.name || l.objId,
+        category: o?.cat || "", complexity: l.comp, qty: l.qty,
+        estimated_pd: r2((o?.[l.comp] || 0) * l.qty),
+        actual_pd: existing ? Number(existing.actual_pd) : null,
+        notes: existing?.notes || "",
+      };
+    });
+    setActualsEntries(entries);
+    setActualsMode(est.id);
+    setTab("actuals");
+  };
+
+  // Save actuals
+  const saveActuals = async () => {
+    const valid = actualsEntries.filter((e) => e.actual_pd !== null && e.actual_pd !== "");
+    if (!valid.length) return;
+    setSavingMsg("Saving actuals...");
+    try {
+      const res = await fetch("/api/actuals", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries: valid }),
+      });
+      const data = await res.json();
+      if (data.success) setSavingMsg(`✅ ${data.count} actuals saved!`);
+      else setSavingMsg("❌ " + data.error);
+    } catch { setSavingMsg("❌ Error saving actuals"); }
+    setTimeout(() => setSavingMsg(""), 2500);
+  };
   const [gf, setGf] = useState("all");
   const [guideObj, setGuideObj] = useState(null);
 
@@ -724,8 +952,11 @@ export default function App({ user, onLogout }) {
           { id: "estimate", l: "📊 Estimator" },
           { id: "plan", l: "📅 Plan" },
           { id: "costing", l: "💰 Costing" },
+          { id: "risks", l: "⚠️ Risks" },
+          { id: "rollout", l: "🌍 Rollout" },
           { id: "guide", l: "📖 Guide" },
           { id: "saved", l: "📁 Saved" },
+          ...(actualsMode ? [{ id: "actuals", l: "✅ Actuals" }] : []),
           ...(user?.role === "admin" ? [{ id: "dashboard", l: "📈 Dashboard" }] : []),
           ...(user?.role === "admin" ? [{ id: "users", l: "👥 Users" }] : []),
         ].map((t) => (
@@ -809,7 +1040,242 @@ export default function App({ user, onLogout }) {
               </div>
             </Card>
           )}
+
+          {/* Dependency Warnings */}
+          {dependencyWarnings.length > 0 && (
+            <Card title={`🔗 Dependency Warnings — ${dependencyWarnings.length} missing prerequisites`}>
+              <div style={{ fontSize: 11, color: P.muted, marginBottom: 8 }}>
+                These objects in your estimate depend on other objects that are NOT included. Consider adding them or confirming they're already configured.
+              </div>
+              <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>
+                  <th style={thStyle}>Your Object</th>
+                  <th style={thStyle}>Depends On (Missing)</th>
+                  <th style={thStyle}>Category</th>
+                  <th style={thStyle}>Action</th>
+                </tr></thead>
+                <tbody>{dependencyWarnings.map((w, i) => (
+                  <tr key={i} style={{ background: i % 2 ? "#fef2f2" : "#fff" }}>
+                    <Td bold>{w.src}</Td>
+                    <Td bold color={P.danger}>⚠ {w.dep}</Td>
+                    <Td>{w.depCat}</Td>
+                    <Td><button onClick={() => {
+                      const cat = CATEGORIES.find((c) => c.objects.some((o) => o.id === w.depId));
+                      if (cat) { setForm({ catId: cat.id, objId: w.depId, comp: "m", qty: 1 }); setGuideObj(w.depId); }
+                    }} style={smBtn(P.teal)}>+ Add</button></Td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+            </Card>
+          )}
+
+          {/* Risk-adjusted effort notice */}
+          {risks.some((r) => r.status === "triggered") && netPD > 0 && (
+            <Card title="⚠️ Risk-Adjusted Effort">
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <SumBox label="Base Effort" value={`${netPD} PD`} color={P.navy} />
+                <SumBox label="Risk Factor" value={`×${activeRiskFactor.toFixed(2)}`} color={P.danger} />
+                <SumBox label="Risk-Adjusted" value={`${riskAdjustedPD} PD`} color={P.danger} bold />
+              </div>
+            </Card>
+          )}
+
+          {/* Multi-country rollout summary */}
+          {rolloutTotal && (
+            <Card title={`🌍 Multi-Country Rollout — ${countries.length} countries`}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {rolloutTotal.map((c) => (
+                  <SumBox key={c.id} label={`${c.name} (${ROLLOUT_TYPES.find((t) => t.id === c.rolloutType)?.label})`} value={`${c.effort} PD`} color={c.multiplier === 1 ? P.navy : P.teal} />
+                ))}
+                <SumBox label="Grand Total" value={`${rolloutGrandTotal} PD`} color="#7c3aed" bold />
+              </div>
+            </Card>
+          )}
         </>)}
+
+        {/* ══ RISKS ══ */}
+        {tab === "risks" && (
+          <>
+            <Card title="⚠️ Risk Register & Assumptions" dark>
+              <div style={{ fontSize: 11, color: "#cbd5e1", marginBottom: 10, marginTop: -4 }}>
+                Flag assumptions. If an assumption breaks, mark it "Triggered" — the effort auto-adjusts by the impact factor. This makes your estimate defensible.
+              </div>
+              <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>{["#", "Assumption", "Category", "Impacts", "Factor", "Status", ""].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
+                <tbody>{risks.map((r, i) => (
+                  <tr key={r.id} style={{ background: r.status === "triggered" ? "#fef2f2" : i % 2 ? "#f8fafc" : "#fff" }}>
+                    <Td>{i + 1}</Td>
+                    <Td><input value={r.assumption} onChange={(e) => setRisks((p) => p.map((x) => x.id === r.id ? { ...x, assumption: e.target.value } : x))}
+                      style={{ width: "100%", padding: "5px 8px", borderRadius: 4, border: `1px solid ${P.border}`, fontSize: 12, outline: "none", boxSizing: "border-box" }} /></Td>
+                    <Td><Sel value={r.category} onChange={(v) => setRisks((p) => p.map((x) => x.id === r.id ? { ...x, category: v } : x))} opts={["Data", "Process", "Resource", "Legislative", "Technical", "Scope", "Timeline"]} /></Td>
+                    <Td><Sel value={r.impact} onChange={(v) => setRisks((p) => p.map((x) => x.id === r.id ? { ...x, impact: v } : x))}
+                      opts={[["all", "All Categories"], ...CATEGORIES.map((c) => [c.id, c.label])]} /></Td>
+                    <Td center><input type="number" min={1} max={3} step={0.05} value={r.factor}
+                      onChange={(e) => setRisks((p) => p.map((x) => x.id === r.id ? { ...x, factor: Number(e.target.value) } : x))}
+                      style={{ width: 55, padding: "4px", textAlign: "center", borderRadius: 4, border: `1px solid ${P.border}`, fontSize: 12 }} /></Td>
+                    <Td center>
+                      <select value={r.status} onChange={(e) => setRisks((p) => p.map((x) => x.id === r.id ? { ...x, status: e.target.value } : x))}
+                        style={{ padding: "4px 6px", borderRadius: 4, border: `1px solid ${r.status === "triggered" ? P.danger : r.status === "mitigated" ? P.ok : P.border}`, fontSize: 11, fontWeight: 600, color: r.status === "triggered" ? P.danger : r.status === "mitigated" ? P.ok : P.text, background: r.status === "triggered" ? "#fef2f2" : r.status === "mitigated" ? "#ecfdf5" : "#fff" }}>
+                        <option value="open">Open</option>
+                        <option value="triggered">Triggered ⚡</option>
+                        <option value="mitigated">Mitigated ✅</option>
+                      </select>
+                    </Td>
+                    <Td><button onClick={() => setRisks((p) => p.filter((x) => x.id !== r.id))} style={{ background: "none", border: "none", cursor: "pointer", color: P.danger, fontSize: 14 }}>✕</button></Td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button onClick={() => setRisks((p) => [...p, { id: uid(), assumption: "", impact: "all", factor: 1.2, status: "open", category: "Scope" }])} style={btnStyle(P.teal)}>+ Add Risk</button>
+              </div>
+            </Card>
+            {netPD > 0 && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <SumBox label="Base Effort" value={`${netPD} PD`} color={P.navy} />
+                <SumBox label="Triggered Risks" value={risks.filter((r) => r.status === "triggered").length} color={P.danger} />
+                <SumBox label="Risk Factor" value={`×${activeRiskFactor.toFixed(2)}`} color={activeRiskFactor > 1 ? P.danger : P.ok} />
+                <SumBox label="Risk-Adjusted Effort" value={`${riskAdjustedPD} PD`} color={activeRiskFactor > 1 ? P.danger : P.navy} bold />
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ══ ROLLOUT ══ */}
+        {tab === "rollout" && (
+          <>
+            <Card title="🌍 Multi-Country / Multi-Module Rollout" dark>
+              <div style={{ fontSize: 11, color: "#cbd5e1", marginBottom: 10, marginTop: -4 }}>
+                Define countries/phases. Country 1 is typically full implementation. Subsequent countries use reduced multipliers based on template reuse.
+                Base effort: <strong>{netPD} PD</strong>
+              </div>
+              <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>{["#", "Country / Phase", "Rollout Type", "Multiplier", "Effort (PD)", ""].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
+                <tbody>{countries.map((c, i) => {
+                  const effort = r2(netPD * c.multiplier);
+                  return (
+                    <tr key={c.id} style={{ background: i % 2 ? "#f8fafc" : "#fff" }}>
+                      <Td>{i + 1}</Td>
+                      <Td><input value={c.name} onChange={(e) => setCountries((p) => p.map((x) => x.id === c.id ? { ...x, name: e.target.value } : x))}
+                        style={{ width: "100%", padding: "5px 8px", borderRadius: 4, border: `1px solid ${P.border}`, fontSize: 12, outline: "none" }} /></Td>
+                      <Td>
+                        <select value={c.rolloutType} onChange={(e) => {
+                          const rt = ROLLOUT_TYPES.find((t) => t.id === e.target.value);
+                          setCountries((p) => p.map((x) => x.id === c.id ? { ...x, rolloutType: e.target.value, multiplier: rt?.multiplier || 1 } : x));
+                        }} style={{ padding: "5px 8px", borderRadius: 4, border: `1px solid ${P.border}`, fontSize: 12, width: "100%" }}>
+                          {ROLLOUT_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label} ({(t.multiplier * 100)}%)</option>)}
+                        </select>
+                        <div style={{ fontSize: 9, color: P.muted, marginTop: 2 }}>{ROLLOUT_TYPES.find((t) => t.id === c.rolloutType)?.desc}</div>
+                      </Td>
+                      <Td center>
+                        <input type="number" min={0} max={1.5} step={0.05} value={c.multiplier}
+                          onChange={(e) => setCountries((p) => p.map((x) => x.id === c.id ? { ...x, multiplier: Number(e.target.value) } : x))}
+                          style={{ width: 55, padding: "4px", textAlign: "center", borderRadius: 4, border: `1px solid ${P.border}`, fontSize: 12, fontWeight: 700 }} />
+                      </Td>
+                      <Td center bold color={P.navy} style={{ fontSize: 14 }}>{effort}</Td>
+                      <Td>{countries.length > 1 && <button onClick={() => setCountries((p) => p.filter((x) => x.id !== c.id))} style={{ background: "none", border: "none", cursor: "pointer", color: P.danger, fontSize: 14 }}>✕</button>}</Td>
+                    </tr>
+                  );
+                })}</tbody>
+                {countries.length > 1 && (
+                  <tfoot><tr style={{ background: P.navy + "0a" }}>
+                    <td colSpan={4} style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>GRAND TOTAL</td>
+                    <td style={{ ...tdStyle, textAlign: "center", fontWeight: 800, color: "#7c3aed", fontSize: 16 }}>{rolloutGrandTotal} PD</td>
+                    <td style={tdStyle}></td>
+                  </tr></tfoot>
+                )}
+              </table></div>
+              <div style={{ marginTop: 10 }}>
+                <button onClick={() => setCountries((p) => [...p, { id: uid(), name: `Country ${p.length + 1}`, rolloutType: "template", multiplier: 0.4 }])} style={btnStyle(P.teal)}>+ Add Country / Phase</button>
+              </div>
+            </Card>
+            {countries.length > 1 && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <SumBox label="Base (Country 1)" value={`${netPD} PD`} color={P.navy} />
+                <SumBox label="Total Countries" value={countries.length} color={P.teal} />
+                <SumBox label="Grand Total" value={`${rolloutGrandTotal} PD`} color="#7c3aed" bold />
+                <SumBox label="Avg per Country" value={`${r2(rolloutGrandTotal / countries.length)} PD`} color={P.warn} />
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ══ ACTUALS TRACKING ══ */}
+        {tab === "actuals" && actualsMode && (
+          <>
+            <Card title="✅ Actuals Tracking — Record Actual Effort vs Estimate" dark>
+              <div style={{ fontSize: 11, color: "#cbd5e1", marginBottom: 10, marginTop: -4 }}>
+                Enter actual person-days spent on each object after delivery. Variance analysis helps refine future estimates.
+              </div>
+              <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>{["Object", "Category", "Complexity", "Qty", "Estimated (PD)", "Actual (PD)", "Variance", "Notes"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
+                <tbody>{actualsEntries.map((e, i) => {
+                  const variance = e.actual_pd !== null ? r2(e.actual_pd - e.estimated_pd) : null;
+                  const pct = e.actual_pd !== null && e.estimated_pd > 0 ? r2((variance / e.estimated_pd) * 100) : null;
+                  return (
+                    <tr key={i} style={{ background: variance !== null ? (variance > 0 ? "#fef2f2" : variance < 0 ? "#ecfdf5" : "#fff") : i % 2 ? "#f8fafc" : "#fff" }}>
+                      <Td bold>{e.object_name}</Td>
+                      <Td>{e.category}</Td>
+                      <Td><Badge color={COMP_COLORS[e.complexity]}>{COMPLEXITY[e.complexity]}</Badge></Td>
+                      <Td center>{e.qty}</Td>
+                      <Td center bold>{e.estimated_pd}</Td>
+                      <Td center>
+                        <input type="number" min={0} step={0.5} value={e.actual_pd ?? ""}
+                          onChange={(ev) => setActualsEntries((p) => p.map((x, j) => j === i ? { ...x, actual_pd: ev.target.value === "" ? null : Number(ev.target.value) } : x))}
+                          style={{ width: 60, padding: "4px", textAlign: "center", borderRadius: 4, border: `1px solid ${P.border}`, fontSize: 12, fontWeight: 700 }} />
+                      </Td>
+                      <Td center style={{ fontWeight: 700, color: variance > 0 ? P.danger : variance < 0 ? P.ok : P.text }}>
+                        {variance !== null ? `${variance > 0 ? "+" : ""}${variance} (${pct > 0 ? "+" : ""}${pct}%)` : "—"}
+                      </Td>
+                      <Td>
+                        <input value={e.notes} onChange={(ev) => setActualsEntries((p) => p.map((x, j) => j === i ? { ...x, notes: ev.target.value } : x))}
+                          placeholder="Why the variance?"
+                          style={{ width: "100%", padding: "4px 6px", borderRadius: 4, border: `1px solid ${P.border}`, fontSize: 11, outline: "none" }} />
+                      </Td>
+                    </tr>
+                  );
+                })}</tbody>
+                <tfoot><tr style={{ background: P.navy + "0a" }}>
+                  <td colSpan={4} style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>TOTAL</td>
+                  <td style={{ ...tdStyle, textAlign: "center", fontWeight: 800, color: P.navy }}>{r2(actualsEntries.reduce((s, e) => s + e.estimated_pd, 0))}</td>
+                  <td style={{ ...tdStyle, textAlign: "center", fontWeight: 800, color: P.teal }}>{r2(actualsEntries.filter((e) => e.actual_pd !== null).reduce((s, e) => s + e.actual_pd, 0))}</td>
+                  <td colSpan={2} style={tdStyle}></td>
+                </tr></tfoot>
+              </table></div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button onClick={saveActuals} style={btnStyle(P.teal)}>💾 Save Actuals</button>
+                <button onClick={() => { setActualsMode(null); setTab("saved"); }} style={btnStyle(P.muted)}>← Back to Saved</button>
+                <button onClick={fetchBenchmarks} style={btnStyle("#7c3aed")}>📊 View Benchmarks</button>
+              </div>
+            </Card>
+
+            {/* Historical Benchmarks */}
+            {benchmarks.length > 0 && (
+              <Card title="📊 Historical Benchmarks — Actuals Data Across All Projects" dark>
+                <div style={{ fontSize: 11, color: "#cbd5e1", marginBottom: 8, marginTop: -4 }}>
+                  Aggregated from all recorded actuals. Use this to refine your effort norms.
+                </div>
+                <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr>{["Object", "Category", "Complexity", "Samples", "Avg Estimated", "Avg Actual", "Avg Variance", "Min Actual", "Max Actual"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
+                  <tbody>{benchmarks.map((b, i) => (
+                    <tr key={i} style={{ background: i % 2 ? "#f8fafc" : "#fff" }}>
+                      <Td bold>{b.object_name}</Td>
+                      <Td>{b.category}</Td>
+                      <Td><Badge color={COMP_COLORS[b.complexity]}>{COMPLEXITY[b.complexity]}</Badge></Td>
+                      <Td center bold>{b.sample_count}</Td>
+                      <Td center>{b.avg_estimated}</Td>
+                      <Td center bold>{b.avg_actual}</Td>
+                      <Td center style={{ fontWeight: 700, color: Number(b.avg_variance_pct) > 0 ? P.danger : P.ok }}>
+                        {Number(b.avg_variance_pct) > 0 ? "+" : ""}{b.avg_variance_pct}%
+                      </Td>
+                      <Td center>{b.min_actual}</Td>
+                      <Td center>{b.max_actual}</Td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+              </Card>
+            )}
+          </>
+        )}
 
         {/* ══ GUIDE ══ */}
         {tab === "guide" && (<>
@@ -1138,6 +1604,7 @@ export default function App({ user, onLogout }) {
                       <Td style={{ fontSize: 11 }}>{new Date(e.created_at).toLocaleDateString()}</Td>
                       <Td><div style={{ display: "flex", gap: 4 }}>
                         <button onClick={() => loadEst(e)} style={smBtn(P.teal)}>Load</button>
+                        <button onClick={() => startActualsTracking(e)} style={smBtn("#7c3aed")}>Actuals</button>
                         <button onClick={() => deleteEst(e.id)} style={smBtn(P.danger)}>Del</button>
                       </div></Td>
                     </tr>))}</tbody>
