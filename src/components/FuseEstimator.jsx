@@ -546,51 +546,6 @@ export default function App({ user, onLogout }) {
     return compareIds.map((id) => saved.find((e) => e.id === id)).filter(Boolean);
   }, [compareIds, saved]);
 
-  // Risk-adjusted effort
-  const activeRiskFactor = useMemo(() => {
-    const triggered = risks.filter((r) => r.status === "triggered");
-    if (!triggered.length) return 1;
-    // Compound the factors for triggered risks
-    return triggered.reduce((f, r) => f * r.factor, 1);
-  }, [risks]);
-
-  const riskAdjustedPD = r2(netPD * activeRiskFactor);
-
-  // Multi-country rollout total
-  const rolloutTotal = useMemo(() => {
-    if (countries.length <= 1) return null;
-    const baseEffort = netPD;
-    return countries.map((c) => ({
-      ...c,
-      effort: r2(baseEffort * c.multiplier),
-    }));
-  }, [countries, netPD]);
-
-  const rolloutGrandTotal = rolloutTotal ? r2(rolloutTotal.reduce((s, c) => s + c.effort, 0)) : netPD;
-
-  // Dependency analysis for current lines
-  const dependencyWarnings = useMemo(() => {
-    const selectedIds = new Set(lines.map((l) => l.objId));
-    const warnings = [];
-    lines.forEach((l) => {
-      const deps = DEPENDENCY_MAP[l.objId] || [];
-      deps.forEach((depId) => {
-        if (!selectedIds.has(depId)) {
-          const depObj = objMap[depId];
-          const srcObj = objMap[l.objId];
-          if (depObj && srcObj) {
-            warnings.push({ src: srcObj.name, srcId: l.objId, dep: depObj.name, depId, depCat: depObj.cat });
-          }
-        }
-      });
-    });
-    // Deduplicate by depId
-    const unique = [];
-    const seen = new Set();
-    warnings.forEach((w) => { const k = `${w.srcId}_${w.depId}`; if (!seen.has(k)) { seen.add(k); unique.push(w); } });
-    return unique;
-  }, [lines, objMap]);
-
   // Fetch benchmarks
   const fetchBenchmarks = async () => {
     try {
@@ -659,6 +614,43 @@ export default function App({ user, onLogout }) {
   const contPD = r2(rawPD * hdr.cont / 100);
   const aiPD = r2((rawPD + contPD) * hdr.ai / 100);
   const netPD = r2(rawPD + contPD - aiPD);
+
+  // Risk-adjusted effort
+  const activeRiskFactor = useMemo(() => {
+    const triggered = risks.filter((r) => r.status === "triggered");
+    if (!triggered.length) return 1;
+    return triggered.reduce((f, r) => f * r.factor, 1);
+  }, [risks]);
+
+  const riskAdjustedPD = r2(netPD * activeRiskFactor);
+
+  // Multi-country rollout total
+  const rolloutTotal = useMemo(() => {
+    if (countries.length <= 1) return null;
+    const baseEffort = netPD;
+    return countries.map((c) => ({ ...c, effort: r2(baseEffort * c.multiplier) }));
+  }, [countries, netPD]);
+
+  const rolloutGrandTotal = rolloutTotal ? r2(rolloutTotal.reduce((s, c) => s + c.effort, 0)) : netPD;
+
+  // Dependency analysis for current lines
+  const dependencyWarnings = useMemo(() => {
+    const selectedIds = new Set(lines.map((l) => l.objId));
+    const warnings = [];
+    lines.forEach((l) => {
+      const deps = DEPENDENCY_MAP[l.objId] || [];
+      deps.forEach((depId) => {
+        if (!selectedIds.has(depId)) {
+          const depObj = objMap[depId];
+          const srcObj = objMap[l.objId];
+          if (depObj && srcObj) warnings.push({ src: srcObj.name, srcId: l.objId, dep: depObj.name, depId, depCat: depObj.cat });
+        }
+      });
+    });
+    const unique = []; const seen = new Set();
+    warnings.forEach((w) => { const k = `${w.srcId}_${w.depId}`; if (!seen.has(k)) { seen.add(k); unique.push(w); } });
+    return unique;
+  }, [lines, objMap]);
 
   const plan = useMemo(() => { let cur = hdr.startDate; return stages.map((stage) => { const sS = cur; let sE = cur; const tasks = stage.tasks.map((t) => { if (t.duration <= 0) return { ...t, startDate: null, endDate: null, skip: true }; const tS = t.parallel ? sS : cur; const tD = Math.max(1, Math.round(t.duration * 5)); const tE = addBizDays(tS, tD); if (!t.parallel) cur = tE; if (new Date(tE) > new Date(sE)) sE = tE; return { ...t, startDate: tS, endDate: tE, skip: false }; }); const activePar = tasks.filter((t) => !t.skip && t.parallel); if (activePar.length) cur = sE; return { ...stage, tasks, startDate: sS, endDate: sE }; }); }, [stages, hdr.startDate]);
 
