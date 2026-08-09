@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -329,7 +329,7 @@ const wksBetween = (a, b) => Math.max(1, Math.ceil((new Date(b) - new Date(a)) /
 const totalObjCount = CATEGORIES.reduce((s, c) => s + c.objects.length, 0);
 
 // ═══════════════════════════════════════════════════════════════
-export default function App() {
+export default function App({ user, onLogout }) {
   const [tab, setTab] = useState("estimate");
   const [hdr, setHdr] = useState({ oppId: "", client: "", region: "EU", module: "HCM", approach: "BigBang", startDate: "2026-09-01", currency: "USD", cont: 10, ai: 0 });
   const [lines, setLines] = useState([]);
@@ -343,6 +343,22 @@ export default function App() {
     weekAlloc: {}, // { [weekNumber]: fraction } — empty means use stageAlloc default
   })));
   const [saved, setSaved] = useState([]);
+  const [savingMsg, setSavingMsg] = useState("");
+  const [searchQ, setSearchQ] = useState("");
+
+  // Load saved estimates from database on mount
+  useEffect(() => {
+    fetchEstimates();
+  }, []);
+
+  const fetchEstimates = async (q = "") => {
+    try {
+      const url = q ? `/api/estimates?search=${encodeURIComponent(q)}` : "/api/estimates";
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.estimates) setSaved(data.estimates);
+    } catch (e) { console.error("Failed to load estimates", e); }
+  };
   const [gf, setGf] = useState("all");
   const [guideObj, setGuideObj] = useState(null);
 
@@ -468,8 +484,45 @@ export default function App() {
 
   const wkMarkers = useMemo(() => { const m = []; const s = new Date(hdr.startDate); for (let i = 0; i < tWks; i++) { const d = new Date(s); d.setDate(d.getDate() + i * 7); m.push({ w: i + 1, l: fmtDate(d.toISOString().slice(0, 10)) }); } return m; }, [hdr.startDate, tWks]);
 
-  const saveEst = () => setSaved((p) => [{ id: uid(), at: new Date().toISOString(), hdr: { ...hdr }, lines: [...lines], roles: roles.map((r) => ({ ...r })), sum: { rawPD, netPD, tWks, pCost } }, ...p]);
-  const loadEst = (e) => { setHdr(e.hdr); setLines(e.lines); if (e.roles) setRoles(e.roles); setTab("estimate"); };
+  const saveEst = async () => {
+    setSavingMsg("Saving...");
+    try {
+      const res = await fetch("/api/estimates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          opportunity_id: hdr.oppId, client: hdr.client, region: hdr.region,
+          module: hdr.module, approach: hdr.approach, start_date: hdr.startDate,
+          currency: hdr.currency, contingency: hdr.cont, ai_efficiency: hdr.ai,
+          raw_pd: rawPD, net_pd: netPD, total_weeks: tWks, total_cost: pCost,
+          lines, stages: stages.map((s) => ({ name: s.name, tasks: s.tasks })),
+          roles: roles.map((r) => ({ title: r.title, practice: r.practice, location: r.location, rate: r.rate, stageAlloc: r.stageAlloc, weekAlloc: r.weekAlloc })),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) { setSavingMsg("✅ Saved!"); fetchEstimates(); }
+      else setSavingMsg("❌ " + (data.error || "Failed"));
+    } catch (e) { setSavingMsg("❌ Error saving"); }
+    setTimeout(() => setSavingMsg(""), 2500);
+  };
+  const loadEst = (e) => {
+    setHdr({ oppId: e.opportunity_id || "", client: e.client || "", region: e.region || "EU", module: e.module || "HCM", approach: e.approach || "BigBang", startDate: e.start_date || "2026-09-01", currency: e.currency || "USD", cont: Number(e.contingency) || 10, ai: Number(e.ai_efficiency) || 0 });
+    try { setLines(JSON.parse(e.lines_json || "[]")); } catch { setLines([]); }
+    try {
+      const stg = JSON.parse(e.stages_json || "[]");
+      if (stg.length) setStages(stg.map((s) => ({ id: uid(), name: s.name, tasks: (s.tasks || []).map((t) => ({ id: uid(), ...t })) })));
+    } catch {}
+    try {
+      const r = JSON.parse(e.roles_json || "[]");
+      if (r.length) setRoles(r.map((x) => ({ id: uid(), ...x })));
+    } catch {}
+    setTab("estimate");
+  };
+  const deleteEst = async (id) => {
+    if (!confirm("Delete this estimate?")) return;
+    await fetch(`/api/estimates?id=${id}`, { method: "DELETE" });
+    fetchEstimates();
+  };
 
   const exportXL = () => {
     const wb = XLSX.utils.book_new();
@@ -599,9 +652,12 @@ export default function App() {
           <div style={{ width: 36, height: 36, background: P.teal, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800 }}>⚡</div>
           <div><div style={{ fontSize: 17, fontWeight: 700 }}>FUSE <span style={{ fontWeight: 400, fontSize: 13, opacity: 0.7 }}>Fusion Unified Smart Estimator</span></div><div style={{ fontSize: 11, opacity: 0.7 }}>From effort to execution — one intelligent workflow</div></div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {savingMsg && <span style={{ fontSize: 12, color: "#fff", background: "rgba(255,255,255,0.15)", padding: "4px 10px", borderRadius: 6 }}>{savingMsg}</span>}
+          {user && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", marginRight: 4 }}>👤 {user.name || user.email}</span>}
           <Btn onClick={saveEst} outline>💾 Save</Btn>
           <Btn onClick={exportXL} outline>📥 Excel</Btn>
+          {onLogout && <Btn onClick={onLogout} outline>🚪 Logout</Btn>}
         </div>
       </div>
 
@@ -974,16 +1030,31 @@ export default function App() {
 
         {/* ══ SAVED ══ */}
         {tab === "saved" && (
-          <Card title="📁 Saved" dark>
-            {saved.length === 0 ? <div style={{ padding: 28, textAlign: "center", color: P.muted }}>No saved estimates.</div> : (
+          <Card title="📁 Saved Estimates — Team Library" dark>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input placeholder="Search by client, opportunity, region..." value={searchQ}
+                onChange={(e) => { setSearchQ(e.target.value); fetchEstimates(e.target.value); }}
+                style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: `1px solid ${P.border}`, fontSize: 12, outline: "none" }} />
+              <button onClick={() => fetchEstimates(searchQ)} style={btnStyle(P.teal)}>🔍 Search</button>
+            </div>
+            {saved.length === 0 ? <div style={{ padding: 28, textAlign: "center", color: P.muted }}>No saved estimates{searchQ ? " matching your search" : ""}.</div> : (
               <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr>{["Client", "Opp", "Region", "PD", "Wks", "Cost", "Date", ""].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
+                <thead><tr>{["Client", "Opp ID", "Region", "Module", "Effort (PD)", "Weeks", `Cost`, "Created By", "Date", ""].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
                 <tbody>{saved.map((e, i) => (
                   <tr key={e.id} style={{ background: i % 2 ? "#f8fafc" : "#fff" }}>
-                    <Td bold>{e.hdr.client || "—"}</Td><Td>{e.hdr.oppId || "—"}</Td><Td>{e.hdr.region}</Td>
-                    <Td bold>{e.sum.netPD}</Td><Td>{e.sum.tWks}w</Td><Td>{e.hdr.currency} {e.sum.pCost?.toLocaleString()}</Td>
-                    <Td style={{ fontSize: 11 }}>{new Date(e.at).toLocaleDateString()}</Td>
-                    <Td><div style={{ display: "flex", gap: 4 }}><button onClick={() => loadEst(e)} style={smBtn(P.teal)}>Load</button><button onClick={() => setSaved((p) => p.filter((x) => x.id !== e.id))} style={smBtn(P.danger)}>Del</button></div></Td>
+                    <Td bold>{e.client || "—"}</Td>
+                    <Td>{e.opportunity_id || "—"}</Td>
+                    <Td>{e.region}</Td>
+                    <Td>{e.module}</Td>
+                    <Td bold>{Number(e.net_pd).toFixed(1)}</Td>
+                    <Td>{e.total_weeks}w</Td>
+                    <Td>{e.currency} {Number(e.total_cost).toLocaleString()}</Td>
+                    <Td style={{ fontSize: 11 }}>{e.created_by_name || "—"}</Td>
+                    <Td style={{ fontSize: 11 }}>{new Date(e.created_at).toLocaleDateString()}</Td>
+                    <Td><div style={{ display: "flex", gap: 4 }}>
+                      <button onClick={() => loadEst(e)} style={smBtn(P.teal)}>Load</button>
+                      <button onClick={() => deleteEst(e.id)} style={smBtn(P.danger)}>Del</button>
+                    </div></Td>
                   </tr>))}</tbody>
               </table></div>)}
           </Card>
