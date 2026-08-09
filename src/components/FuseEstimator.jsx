@@ -345,6 +345,11 @@ export default function App({ user, onLogout }) {
   const [saved, setSaved] = useState([]);
   const [savingMsg, setSavingMsg] = useState("");
   const [searchQ, setSearchQ] = useState("");
+  const [teamUsers, setTeamUsers] = useState([]);
+  const [newUser, setNewUser] = useState({ name: "", email: "", role: "member" });
+  const [userMsg, setUserMsg] = useState("");
+  const [compareIds, setCompareIds] = useState([]);
+  const [showCompare, setShowCompare] = useState(false);
 
   // Load saved estimates from database on mount
   useEffect(() => {
@@ -359,6 +364,59 @@ export default function App({ user, onLogout }) {
       if (data.estimates) setSaved(data.estimates);
     } catch (e) { console.error("Failed to load estimates", e); }
   };
+
+  // User management
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch("/api/users");
+      const data = await res.json();
+      if (data.users) setTeamUsers(data.users);
+    } catch (e) { console.error("Failed to load users", e); }
+  };
+
+  const createUser = async () => {
+    if (!newUser.name || !newUser.email) { setUserMsg("Name and email required"); return; }
+    setUserMsg("Creating...");
+    try {
+      const res = await fetch("/api/users", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newUser),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUserMsg(`✅ User created! Temp password: ${data.tempPassword} — share this with the user`);
+        setNewUser({ name: "", email: "", role: "member" });
+        fetchUsers();
+      } else setUserMsg("❌ " + (data.error || "Failed"));
+    } catch (e) { setUserMsg("❌ Error creating user"); }
+  };
+
+  // Dashboard analytics computed from saved estimates
+  const dashStats = useMemo(() => {
+    if (!saved.length) return null;
+    const totalEstimates = saved.length;
+    const avgPD = r2(saved.reduce((s, e) => s + Number(e.net_pd || 0), 0) / totalEstimates);
+    const avgCost = r2(saved.reduce((s, e) => s + Number(e.total_cost || 0), 0) / totalEstimates);
+    const avgWeeks = r2(saved.reduce((s, e) => s + Number(e.total_weeks || 0), 0) / totalEstimates);
+    const byRegion = {};
+    const byModule = {};
+    const byApproach = {};
+    saved.forEach((e) => {
+      byRegion[e.region] = (byRegion[e.region] || 0) + 1;
+      byModule[e.module] = (byModule[e.module] || 0) + 1;
+      byApproach[e.approach] = (byApproach[e.approach] || 0) + 1;
+    });
+    const costPerPD = avgPD > 0 ? r2(avgCost / avgPD) : 0;
+    const totalRevenue = r2(saved.reduce((s, e) => s + Number(e.total_cost || 0), 0));
+    const highestEst = saved.reduce((max, e) => Number(e.total_cost || 0) > Number(max.total_cost || 0) ? e : max, saved[0]);
+    return { totalEstimates, avgPD, avgCost, avgWeeks, costPerPD, totalRevenue, byRegion, byModule, byApproach, highestEst };
+  }, [saved]);
+
+  // Comparison data
+  const compareData = useMemo(() => {
+    if (compareIds.length < 2) return [];
+    return compareIds.map((id) => saved.find((e) => e.id === id)).filter(Boolean);
+  }, [compareIds, saved]);
   const [gf, setGf] = useState("all");
   const [guideObj, setGuideObj] = useState(null);
 
@@ -662,8 +720,16 @@ export default function App({ user, onLogout }) {
       </div>
 
       <div style={{ display: "flex", background: "#fff", borderBottom: `2px solid ${P.border}`, padding: "0 12px", overflowX: "auto" }}>
-        {[{ id: "estimate", l: "📊 Estimator" }, { id: "plan", l: "📅 Plan" }, { id: "costing", l: "💰 Costing" }, { id: "guide", l: "📖 Complexity Guide" }, { id: "saved", l: "📁 Saved" }].map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "11px 16px", fontWeight: 600, fontSize: 12, cursor: "pointer", color: tab === t.id ? P.teal : P.muted, background: "transparent", border: "none", borderBottom: tab === t.id ? `3px solid ${P.teal}` : "3px solid transparent" }}>{t.l}</button>
+        {[
+          { id: "estimate", l: "📊 Estimator" },
+          { id: "plan", l: "📅 Plan" },
+          { id: "costing", l: "💰 Costing" },
+          { id: "guide", l: "📖 Guide" },
+          { id: "saved", l: "📁 Saved" },
+          { id: "dashboard", l: "📈 Dashboard" },
+          ...(user?.role === "admin" ? [{ id: "users", l: "👥 Users" }] : []),
+        ].map((t) => (
+          <button key={t.id} onClick={() => { setTab(t.id); if (t.id === "users") fetchUsers(); if (t.id === "dashboard") fetchEstimates(); }} style={{ padding: "11px 16px", fontWeight: 600, fontSize: 12, cursor: "pointer", color: tab === t.id ? P.teal : P.muted, background: "transparent", border: "none", borderBottom: tab === t.id ? `3px solid ${P.teal}` : "3px solid transparent" }}>{t.l}</button>
         ))}
       </div>
 
@@ -1030,34 +1096,255 @@ export default function App({ user, onLogout }) {
 
         {/* ══ SAVED ══ */}
         {tab === "saved" && (
-          <Card title="📁 Saved Estimates — Team Library" dark>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <input placeholder="Search by client, opportunity, region..." value={searchQ}
-                onChange={(e) => { setSearchQ(e.target.value); fetchEstimates(e.target.value); }}
-                style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: `1px solid ${P.border}`, fontSize: 12, outline: "none" }} />
-              <button onClick={() => fetchEstimates(searchQ)} style={btnStyle(P.teal)}>🔍 Search</button>
-            </div>
-            {saved.length === 0 ? <div style={{ padding: 28, textAlign: "center", color: P.muted }}>No saved estimates{searchQ ? " matching your search" : ""}.</div> : (
+          <>
+            <Card title="📁 Saved Estimates — Team Library" dark>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                <input placeholder="Search by client, opportunity, region..." value={searchQ}
+                  onChange={(e) => { setSearchQ(e.target.value); fetchEstimates(e.target.value); }}
+                  style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 6, border: `1px solid ${P.border}`, fontSize: 12, outline: "none" }} />
+                <button onClick={() => fetchEstimates(searchQ)} style={btnStyle(P.teal)}>🔍 Search</button>
+                {compareIds.length >= 2 && (
+                  <button onClick={() => setShowCompare(!showCompare)} style={btnStyle("#7c3aed")}>
+                    📊 Compare ({compareIds.length})
+                  </button>
+                )}
+                {compareIds.length > 0 && (
+                  <button onClick={() => { setCompareIds([]); setShowCompare(false); }} style={btnStyle(P.muted)}>Clear</button>
+                )}
+              </div>
+              {saved.length === 0 ? <div style={{ padding: 28, textAlign: "center", color: P.muted }}>No saved estimates{searchQ ? " matching your search" : ""}.</div> : (
+                <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr>
+                    <th style={{ ...thStyle, width: 30 }}>☐</th>
+                    {["Client", "Opp ID", "Region", "Module", "Effort (PD)", "Weeks", "Cost", "Created By", "Date", ""].map((h) => <th key={h} style={thStyle}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>{saved.map((e, i) => (
+                    <tr key={e.id} style={{ background: compareIds.includes(e.id) ? "#ede9fe" : i % 2 ? "#f8fafc" : "#fff" }}>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>
+                        <input type="checkbox" checked={compareIds.includes(e.id)}
+                          onChange={(ev) => {
+                            if (ev.target.checked) setCompareIds((p) => [...p, e.id]);
+                            else setCompareIds((p) => p.filter((x) => x !== e.id));
+                          }} />
+                      </td>
+                      <Td bold>{e.client || "—"}</Td>
+                      <Td>{e.opportunity_id || "—"}</Td>
+                      <Td>{e.region}</Td>
+                      <Td>{e.module}</Td>
+                      <Td bold>{Number(e.net_pd).toFixed(1)}</Td>
+                      <Td>{e.total_weeks}w</Td>
+                      <Td>{e.currency} {Number(e.total_cost).toLocaleString()}</Td>
+                      <Td style={{ fontSize: 11 }}>{e.created_by_name || "—"}</Td>
+                      <Td style={{ fontSize: 11 }}>{new Date(e.created_at).toLocaleDateString()}</Td>
+                      <Td><div style={{ display: "flex", gap: 4 }}>
+                        <button onClick={() => loadEst(e)} style={smBtn(P.teal)}>Load</button>
+                        <button onClick={() => deleteEst(e.id)} style={smBtn(P.danger)}>Del</button>
+                      </div></Td>
+                    </tr>))}</tbody>
+                </table></div>)}
+              {compareIds.length < 2 && saved.length > 1 && (
+                <div style={{ padding: 8, fontSize: 11, color: P.muted, textAlign: "center" }}>
+                  ☐ Select 2 or more estimates to compare side by side
+                </div>
+              )}
+            </Card>
+
+            {/* ── Side-by-Side Comparison ── */}
+            {showCompare && compareData.length >= 2 && (
+              <Card title={`📊 Estimate Comparison — ${compareData.length} estimates`} dark>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead><tr>
+                      <th style={thStyle}>Metric</th>
+                      {compareData.map((e) => (
+                        <th key={e.id} style={{ ...thStyle, background: "#7c3aed", textAlign: "center" }}>
+                          {e.client || "—"}<br /><span style={{ opacity: 0.7, fontSize: 9 }}>{e.opportunity_id}</span>
+                        </th>
+                      ))}
+                      <th style={{ ...thStyle, background: P.ok, textAlign: "center" }}>Diff (Min vs Max)</th>
+                    </tr></thead>
+                    <tbody>
+                      {[
+                        { label: "Region", key: "region" },
+                        { label: "Module", key: "module" },
+                        { label: "Approach", key: "approach" },
+                        { label: "Effort (PD)", key: "net_pd", num: true },
+                        { label: "Duration (Weeks)", key: "total_weeks", num: true },
+                        { label: "Total Cost", key: "total_cost", num: true, fmt: true },
+                        { label: "Contingency %", key: "contingency", num: true },
+                        { label: "AI Efficiency %", key: "ai_efficiency", num: true },
+                        { label: "Currency", key: "currency" },
+                        { label: "Start Date", key: "start_date" },
+                      ].map((row, ri) => {
+                        const vals = compareData.map((e) => row.num ? Number(e[row.key] || 0) : (e[row.key] || "—"));
+                        const numVals = row.num ? vals : [];
+                        const min = row.num ? Math.min(...numVals) : null;
+                        const max = row.num ? Math.max(...numVals) : null;
+                        const diff = row.num && max !== null ? r2(max - min) : null;
+                        return (
+                          <tr key={row.key} style={{ background: ri % 2 ? "#f8fafc" : "#fff" }}>
+                            <td style={{ ...tdStyle, fontWeight: 700, fontSize: 12 }}>{row.label}</td>
+                            {vals.map((v, vi) => {
+                              const isMin = row.num && v === min && min !== max;
+                              const isMax = row.num && v === max && min !== max;
+                              return (
+                                <td key={vi} style={{ ...tdStyle, textAlign: "center", fontWeight: 600, fontSize: 13, color: isMin ? P.ok : isMax ? P.danger : P.text, background: isMin ? "#ecfdf5" : isMax ? "#fef2f2" : "transparent" }}>
+                                  {row.fmt ? Number(v).toLocaleString() : row.num ? v : v}
+                                </td>
+                              );
+                            })}
+                            <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: diff ? "#7c3aed" : P.muted }}>
+                              {diff !== null ? (row.fmt ? diff.toLocaleString() : diff) : "—"}
+                              {diff !== null && max > 0 && <div style={{ fontSize: 9, color: P.muted }}>{r2((diff / min) * 100)}% spread</div>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+          </>
+        )}
+
+        {/* ══ DASHBOARD ══ */}
+        {tab === "dashboard" && (
+          <>
+            {!dashStats ? (
+              <Card title="📈 Dashboard"><div style={{ padding: 28, textAlign: "center", color: P.muted }}>No estimates saved yet. Create and save estimates to see analytics.</div></Card>
+            ) : (<>
+              <Card title="📈 Estimation Intelligence Dashboard" dark>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <SumBox label="Total Estimates" value={dashStats.totalEstimates} color={P.navy} />
+                  <SumBox label="Avg Effort" value={`${dashStats.avgPD} PD`} color="#2563eb" />
+                  <SumBox label="Avg Duration" value={`${dashStats.avgWeeks} wks`} color={P.teal} />
+                  <SumBox label="Avg Cost" value={`${dashStats.avgCost.toLocaleString()}`} color={P.warn} />
+                  <SumBox label="Avg Cost/PD" value={`${dashStats.costPerPD.toLocaleString()}`} color={P.ok} />
+                  <SumBox label="Total Pipeline" value={`${dashStats.totalRevenue.toLocaleString()}`} color="#7c3aed" />
+                </div>
+              </Card>
+
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                <Card title="🌍 By Region">
+                  <div style={{ minWidth: 200 }}>
+                    {Object.entries(dashStats.byRegion).sort((a, b) => b[1] - a[1]).map(([region, count]) => (
+                      <div key={region} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontWeight: 600, fontSize: 12, minWidth: 60 }}>{region}</span>
+                        <div style={{ flex: 1, background: P.border, borderRadius: 4, height: 20, overflow: "hidden" }}>
+                          <div style={{ width: `${(count / dashStats.totalEstimates) * 100}%`, height: "100%", background: P.teal, borderRadius: 4, display: "flex", alignItems: "center", paddingLeft: 6 }}>
+                            <span style={{ fontSize: 10, color: "#fff", fontWeight: 700 }}>{count}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                <Card title="📦 By Module">
+                  <div style={{ minWidth: 200 }}>
+                    {Object.entries(dashStats.byModule).sort((a, b) => b[1] - a[1]).map(([mod, count]) => (
+                      <div key={mod} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontWeight: 600, fontSize: 12, minWidth: 80 }}>{mod}</span>
+                        <div style={{ flex: 1, background: P.border, borderRadius: 4, height: 20, overflow: "hidden" }}>
+                          <div style={{ width: `${(count / dashStats.totalEstimates) * 100}%`, height: "100%", background: "#2563eb", borderRadius: 4, display: "flex", alignItems: "center", paddingLeft: 6 }}>
+                            <span style={{ fontSize: 10, color: "#fff", fontWeight: 700 }}>{count}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                <Card title="🎯 By Approach">
+                  <div style={{ minWidth: 200 }}>
+                    {Object.entries(dashStats.byApproach).sort((a, b) => b[1] - a[1]).map(([app, count]) => (
+                      <div key={app} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontWeight: 600, fontSize: 12, minWidth: 80 }}>{app}</span>
+                        <div style={{ flex: 1, background: P.border, borderRadius: 4, height: 20, overflow: "hidden" }}>
+                          <div style={{ width: `${(count / dashStats.totalEstimates) * 100}%`, height: "100%", background: P.warn, borderRadius: 4, display: "flex", alignItems: "center", paddingLeft: 6 }}>
+                            <span style={{ fontSize: 10, color: "#fff", fontWeight: 700 }}>{count}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+
+              <Card title="📋 All Estimates — Ranked by Cost">
+                <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr>{["#", "Client", "Region", "Module", "Approach", "Effort (PD)", "Weeks", "Cost", "Cost/PD", "By", "Date"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
+                  <tbody>{[...saved].sort((a, b) => Number(b.total_cost) - Number(a.total_cost)).map((e, i) => (
+                    <tr key={e.id} style={{ background: i % 2 ? "#f8fafc" : "#fff" }}>
+                      <Td>{i + 1}</Td>
+                      <Td bold>{e.client || "—"}</Td>
+                      <Td>{e.region}</Td>
+                      <Td>{e.module}</Td>
+                      <Td><Badge color={e.approach === "BigBang" ? "#2563eb" : e.approach === "Phased" ? "#7c3aed" : P.warn}>{e.approach}</Badge></Td>
+                      <Td center bold>{Number(e.net_pd).toFixed(1)}</Td>
+                      <Td center>{e.total_weeks}w</Td>
+                      <Td center bold color={P.navy}>{Number(e.total_cost).toLocaleString()}</Td>
+                      <Td center>{Number(e.net_pd) > 0 ? r2(Number(e.total_cost) / Number(e.net_pd)).toLocaleString() : "—"}</Td>
+                      <Td style={{ fontSize: 11 }}>{e.created_by_name || "—"}</Td>
+                      <Td style={{ fontSize: 11 }}>{new Date(e.created_at).toLocaleDateString()}</Td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+              </Card>
+            </>)}
+          </>
+        )}
+
+        {/* ══ USER MANAGEMENT (Admin Only) ══ */}
+        {tab === "users" && user?.role === "admin" && (
+          <>
+            <Card title="➕ Add New User" accent>
+              <Row>
+                <Field label="Full Name" flex={2}><Input value={newUser.name} onChange={(v) => setNewUser((u) => ({ ...u, name: v }))} placeholder="John Smith" /></Field>
+                <Field label="Email" flex={3}><Input value={newUser.email} onChange={(v) => setNewUser((u) => ({ ...u, email: v }))} placeholder="john@company.com" /></Field>
+                <Field label="Role"><Sel value={newUser.role} onChange={(v) => setNewUser((u) => ({ ...u, role: v }))} opts={[["member", "Member"], ["admin", "Admin"]]} /></Field>
+                <Field label=" " flex={0.8}>
+                  <button onClick={createUser} style={{ ...btnStyle(P.teal), width: "100%", justifyContent: "center" }}>+ Create User</button>
+                </Field>
+              </Row>
+              {userMsg && (
+                <div style={{
+                  padding: "10px 14px", borderRadius: 8, fontSize: 12, marginTop: 4,
+                  background: userMsg.startsWith("✅") ? "#ecfdf5" : userMsg.startsWith("❌") ? "#fef2f2" : "#f8fafc",
+                  border: `1px solid ${userMsg.startsWith("✅") ? "#a7f3d0" : userMsg.startsWith("❌") ? "#fecaca" : P.border}`,
+                  color: userMsg.startsWith("✅") ? "#059669" : userMsg.startsWith("❌") ? "#dc2626" : P.text,
+                }}>
+                  {userMsg}
+                  {userMsg.includes("Temp password:") && (
+                    <div style={{ marginTop: 6, padding: "6px 10px", background: "#fff", borderRadius: 4, border: `1px solid ${P.border}`, fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: P.navy }}>
+                      {userMsg.split("Temp password: ")[1]?.split(" —")[0]}
+                      <span style={{ fontSize: 10, fontWeight: 400, color: P.muted, marginLeft: 10 }}>← copy and share with the user</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: P.muted, marginTop: 8 }}>
+                The user will receive a temporary password. On first login, they'll be prompted to set their own password.
+              </div>
+            </Card>
+
+            <Card title="👥 Team Members" dark>
               <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr>{["Client", "Opp ID", "Region", "Module", "Effort (PD)", "Weeks", `Cost`, "Created By", "Date", ""].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
-                <tbody>{saved.map((e, i) => (
-                  <tr key={e.id} style={{ background: i % 2 ? "#f8fafc" : "#fff" }}>
-                    <Td bold>{e.client || "—"}</Td>
-                    <Td>{e.opportunity_id || "—"}</Td>
-                    <Td>{e.region}</Td>
-                    <Td>{e.module}</Td>
-                    <Td bold>{Number(e.net_pd).toFixed(1)}</Td>
-                    <Td>{e.total_weeks}w</Td>
-                    <Td>{e.currency} {Number(e.total_cost).toLocaleString()}</Td>
-                    <Td style={{ fontSize: 11 }}>{e.created_by_name || "—"}</Td>
-                    <Td style={{ fontSize: 11 }}>{new Date(e.created_at).toLocaleDateString()}</Td>
-                    <Td><div style={{ display: "flex", gap: 4 }}>
-                      <button onClick={() => loadEst(e)} style={smBtn(P.teal)}>Load</button>
-                      <button onClick={() => deleteEst(e.id)} style={smBtn(P.danger)}>Del</button>
-                    </div></Td>
-                  </tr>))}</tbody>
-              </table></div>)}
-          </Card>
+                <thead><tr>{["Name", "Email", "Role", "Status", "Joined"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
+                <tbody>{teamUsers.map((u, i) => (
+                  <tr key={u.id} style={{ background: i % 2 ? "#f8fafc" : "#fff" }}>
+                    <Td bold>{u.name}</Td>
+                    <Td>{u.email}</Td>
+                    <Td><Badge color={u.role === "admin" ? "#7c3aed" : P.teal}>{u.role === "admin" ? "🛡️ Admin" : "👤 Member"}</Badge></Td>
+                    <Td>{u.temp_password ? <Badge color={P.warn}>⏳ Pending password change</Badge> : <Badge color={P.ok}>✅ Active</Badge>}</Td>
+                    <Td style={{ fontSize: 11 }}>{new Date(u.created_at).toLocaleDateString()}</Td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+              {teamUsers.length === 0 && <div style={{ padding: 20, textAlign: "center", color: P.muted }}>Loading team members...</div>}
+            </Card>
+          </>
         )}
       </div>
     </div>
