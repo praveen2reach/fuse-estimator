@@ -68,6 +68,12 @@ export default function LoginPage() {
         <div style={{ textAlign: "center", marginTop: 20, fontSize: 11, color: "#94a3b8" }}>
           First time? Use the temporary password sent by your admin.
         </div>
+        <div style={{ textAlign: "center", marginTop: 12 }}>
+          <button onClick={() => router.push("/forgot-password")}
+            style={{ background: "none", border: "none", color: "#0e7c6b", fontSize: 12, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
+            Forgot Password?
+          </button>
+        </div>
       </div>
     </div>
   );
